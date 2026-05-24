@@ -9,5 +9,108 @@
 body {
   margin: 0;
   font-family: 'Outfit', 'Inter', system-ui, sans-serif;
-  background-color: #0b0f19;
+  background: linear-gradient(135deg, #181f28 0%, #252b35 50%, #1d242d 100%) !important; /* Premium Matte Forest Charcoal & Pine Dusk */
+  color: #e2e8f0 !important; /* Soft warm silver text for comfortable dark contrast */
+}
+
+/* ============================================================
+   MISTY FOREST & ALPINE CHARCOAL THEME (Pine Dusk Mode)
+   ============================================================ */
+
+/* Main layout background matching */
+.bg-\[\#080b14\], .bg-\[\#0b0f19\] {
+  background: linear-gradient(135deg, #181f28 0%, #252b35 50%, #1d242d 100%) !important;
+}
+
+/* Softer dark header & sidebar following the Misty Pine theme */
+header, 
+aside, 
+.bg-slate-950\/80.border-r {
+  background-color: rgba(24, 31, 40, 0.85) !important; /* Charcoal Pine Dusk */
+  border-color: rgba(255, 255, 255, 0.05) !important;
+  backdrop-filter: blur(12px) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+}
+
+/* Header and sidebar text values */
+aside *, header * {
+  color: #e2e8f0 !important;
+}
+aside button:hover {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+header span, header strong {
+  color: #10b981 !important; /* Glowing mint green accent */
+}
+
+/* Glassmorphic Spruce Dark Frosted Cards */
+.bg-slate-950, 
+.bg-slate-950\/80, 
+.bg-slate-950\/60, 
+.bg-slate-950\/40, 
+.bg-slate-950\/20,
+.bg-slate-950\/50, 
+.bg-slate-950\/90,
+.bg-slate-900, 
+.bg-slate-900\/80, 
+.bg-slate-900\/60, 
+.bg-slate-900\/40, 
+.bg-slate-900\/30,
+.bg-slate-900\/20 {
+  background-color: rgba(37, 43, 53, 0.75) !important; /* Dark Frosted Pine Glass */
+  border-color: rgba(255, 255, 255, 0.07) !important;
+  color: #e2e8f0 !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* Inputs styling (dark frosted inputs) */
+input, select, textarea {
+  background-color: rgba(24, 31, 40, 0.75) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  color: #f8fafc !important;
+}
+input::placeholder, textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Re-adjust text contrasts for maximum reading comfort */
+.text-slate-100, .text-slate-200, .text-slate-350, .text-slate-105 {
+  color: #f1f5f9 !important;
+}
+.text-slate-400, .text-slate-500 {
+  color: #94a3b8 !important;
+}
+.text-indigo-400 {
+  color: #a5b4fc !important; /* Soft lavender blue */
+}
+
+/* Urgency badges and stats cards */
+.bg-slate-900\/40 {
+  background-color: rgba(37, 43, 53, 0.9) !important;
+  border-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* Audit logs visual container styling */
+.text-slate-355, .text-slate-300 {
+  color: #cbd5e1 !important;
+}
+.bg-slate-950\/40 {
+  background-color: rgba(24, 31, 40, 0.4) !important;
+}
+
+/* Telemetry visualizer canvas */
+canvas {
+  background-color: rgba(24, 31, 40, 0.85) !important;
+  border-radius: 12px;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* Ambient light vectors on login pages (Mint green & Teal glows) */
+.absolute.top-1\/4.left-1\/4.w-96.h-96.bg-indigo-500\/10 {
+  background-color: rgba(16, 185, 129, 0.05) !important; /* Misty Mint glow */
+}
+.absolute.bottom-1\/4.right-1\/4.w-96.h-96.bg-emerald-500\/10 {
+  background-color: rgba(56, 189, 248, 0.05) !important; /* Misty Cyan glow */
 }
