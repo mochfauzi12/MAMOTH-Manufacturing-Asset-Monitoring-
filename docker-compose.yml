@@ -1,0 +1,102 @@
+version: "3.9"
+
+networks:
+  mamoth-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_uploads:
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mamoth-postgres
+    restart: unless-stopped
+    networks: [mamoth-network]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mamoth_ops}
+      POSTGRES_USER: ${POSTGRES_USER:-mamoth}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7.2-alpine
+    container_name: mamoth-redis
+    restart: unless-stopped
+    networks: [mamoth-network]
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mamoth-backend
+    restart: unless-stopped
+    networks: [mamoth-network]
+    volumes:
+      - media_uploads:/app/uploads
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:\$${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:?required}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
+      VAPID_CLAIMS_EMAIL: ${VAPID_CLAIMS_EMAIL}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+      ENVIRONMENT: production
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.worker
+    container_name: mamoth-worker
+    restart: unless-stopped
+    networks: [mamoth-network]
+    volumes:
+      - media_uploads:/app/uploads
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      FCM_PROJECT_ID: ${FCM_PROJECT_ID}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      ENVIRONMENT: production
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+        VITE_WS_URL: /ws
+        VITE_FCM_VAPID_KEY: ${VAPID_PUBLIC_KEY}
+    container_name: mamoth-frontend
+    restart: unless-stopped
+    networks: [mamoth-network]
+    ports:
+      - "80:80"
+    depends_on:
+      - backend

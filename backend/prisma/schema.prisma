@@ -1,0 +1,382 @@
+// prisma/schema.prisma
+
+generator client {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum IncidentStatus {
+  PENDING_DISPATCH       // Baru masuk, menunggu review supervisor
+  DISPATCHED_MASSAL      // Sudah di-blast ke teknisi
+  UNDER_REPAIR           // Teknisi sudah terima dan sedang mengerjakan
+  RESOLVED               // Selesai diperbaiki
+  CANCELLED              // Dibatalkan supervisor (dengan alasan)
+}
+
+enum IncidentUrgency {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TechnicianStatus {
+  STANDBY    // Siap menerima perintah kerja
+  ON_DUTY    // Sedang mengerjakan tiket
+  OFF_DUTY   // Tidak bertugas (shift habis)
+  OFFLINE    // Tidak tersedia (force by system jika tidak ada heartbeat)
+}
+
+enum AuditAction {
+  INCIDENT_CREATED
+  STATUS_CHANGED
+  TECHNICIAN_ASSIGNED
+  BLAST_DISPATCHED
+  TECHNICIAN_ACCEPTED
+  TECHNICIAN_REJECTED
+  WORK_NOTE_ADDED
+  INCIDENT_RESOLVED
+  INCIDENT_CANCELLED
+  AVAILABILITY_CHANGED
+}
+
+enum SyncSource {
+  ONLINE_DIRECT  // Submit langsung saat online
+  OFFLINE_SYNC   // Dari antrian offline
+}
+
+enum BlastJobStatus {
+  QUEUED
+  IN_PROGRESS
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum UserRole {
+  OPERATOR
+  SUPERVISOR
+  TECHNICIAN
+  ADMIN
+}
+
+enum ShiftType {
+  MORNING
+  AFTERNOON
+  NIGHT
+}
+
+// ============================================================
+// USERS & AUTH
+// ============================================================
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  pin           String?  @map("pin") // PIN 4-6 digit untuk shared tablet, hashed
+  fullName      String   @map("full_name")
+  role          UserRole
+  isActive      Boolean  @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  operator      Operator?
+  supervisor    Supervisor?
+  technician    Technician?
+  auditLogs     IncidentAuditLog[]
+  refreshTokens RefreshToken[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, revokedAt])
+  @@map("refresh_tokens")
+}
+
+model Operator {
+  id           String     @id @default(uuid())
+  userId       String     @unique @map("user_id")
+  employeeCode String     @unique @map("employee_code")
+  department   String
+  shift        ShiftType
+
+  user         User       @relation(fields: [userId], references: [id])
+  incidents    Incident[]
+
+  @@map("operators")
+}
+
+model Supervisor {
+  id           String     @id @default(uuid())
+  userId       String     @unique @map("user_id")
+  employeeCode String     @unique @map("employee_code")
+  area         String
+
+  user         User       @relation(fields: [userId], references: [id])
+  blastJobs    BlastJob[]
+
+  @@map("supervisors")
+}
+
+model Technician {
+  id              String           @id @default(uuid())
+  userId          String           @unique @map("user_id")
+  employeeCode    String           @unique @map("employee_code")
+  specialization  String[]         // ["electrical", "mechanical", "hydraulic"]
+  status          TechnicianStatus @default(STANDBY)
+  avgMttrMinutes  Float?           @map("avg_mttr_minutes")
+  lastHeartbeatAt DateTime?        @map("last_heartbeat_at")
+
+  user              User                   @relation(fields: [userId], references: [id])
+  pushSubscriptions PushSubscription[]
+  incidentWork      IncidentTechnician[]
+  performanceLogs   TechnicianPerformance[]
+  blastDeliveries   BlastDeliveryLog[]
+
+  @@map("technicians")
+}
+
+// ============================================================
+// MACHINES
+// ============================================================
+
+model Machine {
+  id           String    @id @default(uuid())
+  machineCode  String    @unique @map("machine_code")
+  name         String
+  type         String
+  location     String
+  floor        String
+  area         String
+  isActive     Boolean   @default(true) @map("is_active")
+  lastRepaired DateTime? @map("last_repaired")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  incidents    Incident[]
+
+  @@index([area, isActive])
+  @@map("machines")
+}
+
+// ============================================================
+// INCIDENTS (CORE TABLE)
+// ============================================================
+
+model Incident {
+  id            String          @id @default(uuid())
+  ticketNumber  String          @unique @map("ticket_number")
+
+  machineId     String          @map("machine_id")
+  reportedById  String          @map("reported_by_id")
+
+  incidentType  String          @map("incident_type")
+  description   String          @db.Text
+  urgency       IncidentUrgency
+  status        IncidentStatus  @default(PENDING_DISPATCH)
+  photoUrls     String[]        @map("photo_urls")
+  resolvedNote  String?         @map("resolved_note") @db.Text
+  cancelNote    String?         @map("cancel_note")
+
+  // Sinkronisasi Offline
+  localId         String?   @unique @map("local_id")
+  syncSource      SyncSource @default(ONLINE_DIRECT) @map("sync_source")
+  clientTimestamp DateTime? @map("client_timestamp")
+
+  // KPI Timestamps
+  createdAt     DateTime  @default(now()) @map("created_at")
+  dispatchedAt  DateTime? @map("dispatched_at")
+  acceptedAt    DateTime? @map("accepted_at")
+  resolvedAt    DateTime? @map("resolved_at")
+  cancelledAt   DateTime? @map("cancelled_at")
+
+  // Computed KPI
+  mttrMinutes     Float? @map("mttr_minutes")
+  responseTimeMin Float? @map("response_time_min")
+
+  machine      Machine              @relation(fields: [machineId], references: [id])
+  operator     Operator             @relation(fields: [reportedById], references: [id])
+  auditLogs    IncidentAuditLog[]
+  blastJobs    BlastJobIncident[]
+  technicians  IncidentTechnician[]
+
+  @@index([status, urgency])
+  @@index([machineId, status])
+  @@index([machineId, createdAt])
+  @@index([createdAt])
+  @@index([localId])
+  @@map("incidents")
+}
+
+model IncidentTechnician {
+  id           String    @id @default(uuid())
+  incidentId   String    @map("incident_id")
+  technicianId String    @map("technician_id")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  acceptedAt   DateTime? @map("accepted_at")
+  rejectedAt   DateTime? @map("rejected_at")
+  rejectReason String?   @map("reject_reason")
+  completedAt  DateTime? @map("completed_at")
+  workNotes    String?   @map("work_notes") @db.Text
+
+  incident     Incident   @relation(fields: [incidentId], references: [id])
+  technician   Technician @relation(fields: [technicianId], references: [id])
+
+  @@unique([incidentId, technicianId])
+  @@map("incident_technicians")
+}
+
+// ============================================================
+// BLAST JOBS
+// ============================================================
+
+model BlastJob {
+  id             String         @id @default(uuid())
+  supervisorId   String         @map("supervisor_id")
+  message        String?        @db.Text
+  status         BlastJobStatus @default(QUEUED)
+  technicianCount Int           @default(0) @map("technician_count")
+  successCount   Int            @default(0) @map("success_count")
+  failedCount    Int            @default(0) @map("failed_count")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  startedAt      DateTime?      @map("started_at")
+  completedAt    DateTime?      @map("completed_at")
+
+  supervisor    Supervisor         @relation(fields: [supervisorId], references: [id])
+  incidents     BlastJobIncident[]
+  deliveries    BlastDeliveryLog[]
+
+  @@index([status, createdAt])
+  @@map("blast_jobs")
+}
+
+model BlastJobIncident {
+  blastJobId String @map("blast_job_id")
+  incidentId String @map("incident_id")
+
+  blastJob BlastJob @relation(fields: [blastJobId], references: [id])
+  incident Incident @relation(fields: [incidentId], references: [id])
+
+  @@id([blastJobId, incidentId])
+  @@map("blast_job_incidents")
+}
+
+model BlastDeliveryLog {
+  id              String    @id @default(uuid())
+  blastJobId      String    @map("blast_job_id")
+  technicianId    String    @map("technician_id")
+  subscriptionId  String    @map("subscription_id")
+  status          String
+  errorMessage    String?   @map("error_message")
+  sentAt          DateTime  @default(now()) @map("sent_at")
+
+  blastJob    BlastJob   @relation(fields: [blastJobId], references: [id])
+  technician  Technician @relation(fields: [technicianId], references: [id])
+
+  @@index([blastJobId, status])
+  @@map("blast_delivery_logs")
+}
+
+// ============================================================
+// AUDIT TRAIL
+// ============================================================
+
+model IncidentAuditLog {
+  id             String          @id @default(uuid())
+  incidentId     String          @map("incident_id")
+  actorId        String          @map("actor_id")
+  action         AuditAction
+  previousStatus IncidentStatus? @map("previous_status")
+  newStatus      IncidentStatus? @map("new_status")
+  metadata       Json?
+  ipAddress      String?         @map("ip_address")
+  userAgent      String?         @map("user_agent")
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  incident Incident @relation(fields: [incidentId], references: [id])
+  actor    User     @relation(fields: [actorId], references: [id])
+
+  @@index([incidentId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@map("incident_audit_logs")
+}
+
+// ============================================================
+// TECHNICIAN PERFORMANCE (Materialized Monthly)
+// ============================================================
+
+model TechnicianPerformance {
+  id                 String    @id @default(uuid())
+  technicianId       String    @map("technician_id")
+  periodMonth        Int       @map("period_month")
+  periodYear         Int       @map("period_year")
+  totalResolved      Int       @default(0) @map("total_resolved")
+  avgMttrMinutes     Float?    @map("avg_mttr_minutes")
+  avgResponseMin     Float?    @map("avg_response_min")
+  criticalHandled    Int       @default(0) @map("critical_handled")
+  totalBlastReceived Int       @default(0) @map("total_blast_received")
+  acceptanceRate     Float?    @map("acceptance_rate")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  technician Technician @relation(fields: [technicianId], references: [id])
+
+  @@unique([technicianId, periodMonth, periodYear])
+  @@map("technician_performance")
+}
+
+// ============================================================
+// PUSH SUBSCRIPTIONS
+// ============================================================
+
+model PushSubscription {
+  id           String    @id @default(uuid())
+  technicianId String    @map("technician_id")
+  endpoint     String    @db.Text
+  p256dhKey    String    @map("p256dh_key") @db.Text
+  authKey      String    @map("auth_key")
+  deviceLabel  String?   @map("device_label")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  lastUsed     DateTime? @map("last_used")
+  lastFailed   DateTime? @map("last_failed")
+
+  technician Technician @relation(fields: [technicianId], references: [id])
+
+  @@index([technicianId, isActive])
+  @@map("push_subscriptions")
+}
+
+// ============================================================
+// SYSTEM CONFIG
+// ============================================================
+
+model SystemConfig {
+  key       String @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+  updatedBy String   @map("updated_by")
+
+  @@map("system_configs")
+}
